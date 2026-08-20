@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from geoalchemy2 import WKTElement
 
 from database import engine, Base, SessionLocal
-from models import Container, SystemSettings
+from models import Container, Vehicle, SystemSettings
 from schemas.container import ContainerCreate, ContainerResponse, ContainerUpdate
 from schemas.settings import SettingsResponse, SettingsUpdate
+from schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 
 
 app = FastAPI()
@@ -143,6 +144,199 @@ def create_container(
         "message": "Container created successfully",
         "id": new_container.id
     }
+
+
+
+# --------------------------------------------------
+# CREATE VEHICLE
+# --------------------------------------------------
+
+@app.post("/vehicles")
+def create_vehicle(
+    vehicle: VehicleCreate,
+    db: Session = Depends(get_db)
+):
+    location = WKTElement(
+        f"POINT({vehicle.longitude} {vehicle.latitude})",
+        srid=4326
+    )
+
+    new_vehicle = Vehicle(
+        name=vehicle.name,
+        plate_number=vehicle.plate_number,
+        capacity=vehicle.capacity,
+        current_location=location,
+        status=vehicle.status
+    )
+
+    db.add(new_vehicle)
+    db.commit()
+    db.refresh(new_vehicle)
+
+    return {
+        "message": "Vehicle created successfully",
+        "id": new_vehicle.id
+    }
+
+
+
+# --------------------------------------------------
+# GET ALL VEHICLES
+# --------------------------------------------------
+
+@app.get(
+    "/vehicles",
+    response_model=list[VehicleResponse]
+)
+def get_vehicles(
+    db: Session = Depends(get_db)
+):
+    vehicles = db.query(
+        Vehicle,
+        func.ST_X(Vehicle.current_location).label("longitude"),
+        func.ST_Y(Vehicle.current_location).label("latitude")
+    ).all()
+
+    result = []
+
+    for vehicle, longitude, latitude in vehicles:
+        result.append({
+            "id": vehicle.id,
+            "name": vehicle.name,
+            "plate_number": vehicle.plate_number,
+            "capacity": vehicle.capacity,
+            "latitude": latitude,
+            "longitude": longitude,
+            "status": vehicle.status
+        })
+
+    return result
+
+
+# --------------------------------------------------
+# GET SINGLE VEHICLE
+# --------------------------------------------------
+
+@app.get(
+    "/vehicles/{vehicle_id}",
+    response_model=VehicleResponse
+)
+def get_vehicle(
+    vehicle_id: int,
+    db: Session = Depends(get_db)
+):
+    result = db.query(
+        Vehicle,
+        func.ST_X(Vehicle.current_location).label("longitude"),
+        func.ST_Y(Vehicle.current_location).label("latitude")
+    ).filter(
+        Vehicle.id == vehicle_id
+    ).first()
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    vehicle, longitude, latitude = result
+
+    return {
+        "id": vehicle.id,
+        "name": vehicle.name,
+        "plate_number": vehicle.plate_number,
+        "capacity": vehicle.capacity,
+        "latitude": latitude,
+        "longitude": longitude,
+        "status": vehicle.status
+    }
+
+
+
+# --------------------------------------------------
+# UPDATE VEHICLE
+# --------------------------------------------------
+
+@app.put("/vehicles/{vehicle_id}")
+def update_vehicle(
+    vehicle_id: int,
+    vehicle: VehicleUpdate,
+    db: Session = Depends(get_db)
+):
+    existing_vehicle = db.query(
+        Vehicle
+    ).filter(
+        Vehicle.id == vehicle_id
+    ).first()
+
+    if existing_vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    if vehicle.name is not None:
+        existing_vehicle.name = vehicle.name
+
+    if vehicle.plate_number is not None:
+        existing_vehicle.plate_number = vehicle.plate_number
+
+    if vehicle.capacity is not None:
+        existing_vehicle.capacity = vehicle.capacity
+
+    if vehicle.status is not None:
+        existing_vehicle.status = vehicle.status
+
+    if (
+        vehicle.latitude is not None
+        and vehicle.longitude is not None
+    ):
+        existing_vehicle.current_location = WKTElement(
+            f"POINT({vehicle.longitude} {vehicle.latitude})",
+            srid=4326
+        )
+
+    db.commit()
+    db.refresh(existing_vehicle)
+
+    return {
+        "message": "Vehicle updated successfully",
+        "id": existing_vehicle.id
+    }
+
+
+
+# --------------------------------------------------
+# DELETE VEHICLE
+# --------------------------------------------------
+
+@app.delete("/vehicles/{vehicle_id}")
+def delete_vehicle(
+    vehicle_id: int,
+    db: Session = Depends(get_db)
+):
+    vehicle = db.query(
+        Vehicle
+    ).filter(
+        Vehicle.id == vehicle_id
+    ).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    db.delete(vehicle)
+    db.commit()
+
+    return {
+        "message": "Vehicle deleted successfully",
+        "id": vehicle_id
+    }
+
+
+
 
 
 # --------------------------------------------------

@@ -54,6 +54,49 @@ class Container(Base):
     )
 
 
+class Vehicle(Base):
+    __tablename__ = "vehicles"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    name = Column(
+        String,
+        nullable=False
+    )
+
+    plate_number = Column(
+        String,
+        nullable=False,
+        unique=True
+    )
+
+    capacity = Column(
+        Integer,
+        nullable=False
+    )
+
+    current_location = Column(
+        Geometry("POINT", srid=4326),
+        nullable=False
+    )
+
+    status = Column(
+        String,
+        nullable=False,
+        default="active"
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    
+
+
 class SystemSettings(Base):
     __tablename__ = "system_settings"
 
