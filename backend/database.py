@@ -1,7 +1,12 @@
+import os
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_URL = "postgresql://postgres:feza0102@localhost:5432/smart_waste_routing"
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL") #get the database URL from environment variables
 
 engine = create_engine(DATABASE_URL)
 
