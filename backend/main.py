@@ -167,13 +167,13 @@ def get_containers(
     for container, longitude, latitude in containers:
         result.append({
             "id": container.id,
-            "name": container.name,
-            "latitude": latitude,
-            "longitude": longitude,
-            "capacity": container.capacity,
-            "fill_level": container.fill_level,
-            "fill_duration_days": container.fill_duration_days,
-            "status": container.status
+    "name": container.name,
+    "latitude": latitude,
+    "longitude": longitude,
+    "capacity": container.capacity,
+    "fill_level": calculate_fill_level(container),
+    "fill_duration_days": container.fill_duration_days,
+    "status": container.status
         })
 
     return result
@@ -190,27 +190,40 @@ def get_containers(
 def get_full_containers(
     db: Session = Depends(get_db)
 ):
+    # Sistemdeki toplama eşiğini al
+    settings = db.query(SystemSettings).first()
+
+    if settings is None:
+        collection_threshold = 80
+    else:
+        collection_threshold = settings.collection_threshold
+
+    # Tüm konteynerleri al
     containers = db.query(
         Container,
         func.ST_X(Container.location).label("longitude"),
         func.ST_Y(Container.location).label("latitude")
-    ).filter(
-        Container.fill_level >= 80
     ).all()
 
     result = []
 
     for container, longitude, latitude in containers:
-        result.append({
-            "id": container.id,
-            "name": container.name,
-            "latitude": latitude,
-            "longitude": longitude,
-            "capacity": container.capacity,
-            "fill_level": container.fill_level,
-            "fill_duration_days": container.fill_duration_days,
-            "status": container.status
-        })
+
+        # Güncel doluluk oranını hesapla
+        current_fill_level = calculate_fill_level(container)
+
+        # Kullanıcının belirlediği eşik değerine göre kontrol et
+        if current_fill_level >= collection_threshold:
+            result.append({
+                "id": container.id,
+                "name": container.name,
+                "latitude": latitude,
+                "longitude": longitude,
+                "capacity": container.capacity,
+                "fill_level": current_fill_level,
+                "fill_duration_days": container.fill_duration_days,
+                "status": container.status
+            })
 
     return result
 
@@ -249,7 +262,7 @@ def get_container(
         "latitude": latitude,
         "longitude": longitude,
         "capacity": container.capacity,
-        "fill_level": container.fill_level,
+        "fill_level": calculate_fill_level(container),
         "fill_duration_days": container.fill_duration_days,
         "status": container.status
     }
@@ -309,6 +322,47 @@ def update_container(
         "message": "Container updated successfully",
         "id": existing_container.id
     }
+
+
+
+# --------------------------------------------------
+# EMPTY CONTAINER
+# --------------------------------------------------
+
+@app.post("/containers/{container_id}/empty")
+def empty_container(
+    container_id: int,
+    db: Session = Depends(get_db)
+):
+    container = db.query(
+        Container
+    ).filter(
+        Container.id == container_id
+    ).first()
+
+    if container is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Container not found"
+        )
+
+    # Konteynerin doluluğunu sıfırla
+    container.fill_level = 0
+
+    # Yeni dolum sürecini şimdi başlat
+    container.fill_started_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(container)
+
+    return {
+        "message": "Container emptied successfully",
+        "id": container.id,
+        "fill_level": 0,
+        "fill_started_at": container.fill_started_at
+    }
+
+
 
 
 # --------------------------------------------------
