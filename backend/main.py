@@ -11,6 +11,7 @@ from models import Container, Vehicle, SystemSettings
 from schemas.container import ContainerCreate, ContainerResponse, ContainerUpdate
 from schemas.settings import SettingsResponse, SettingsUpdate
 from schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
+from schemas.route import RouteCapacityCheck, RouteCapacityResponse
 
 
 app = FastAPI()
@@ -630,3 +631,103 @@ def update_settings(
     db.refresh(settings)
 
     return settings
+
+
+
+# --------------------------------------------------
+# CHECK ROUTE CAPACITY
+# --------------------------------------------------
+
+@app.post(
+    "/route/check-capacity",
+    response_model=RouteCapacityResponse
+)
+def check_route_capacity(
+    route_data: RouteCapacityCheck,
+    db: Session = Depends(get_db)
+):
+    # Seçilen aracı bul
+    vehicle = db.query(
+        Vehicle
+    ).filter(
+        Vehicle.id == route_data.vehicle_id
+    ).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    # Sadece aktif araç kullanılabilsin
+    if vehicle.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="Selected vehicle is not active"
+        )
+
+    # Aynı konteyner ID'si iki kez gönderilmesin
+    unique_container_ids = list(
+        set(route_data.container_ids)
+    )
+
+    # Seçilen konteynerleri bul
+    containers = db.query(
+        Container
+    ).filter(
+        Container.id.in_(unique_container_ids)
+    ).all()
+
+    # Gönderilen bazı konteynerler bulunamadıysa hata ver
+    if len(containers) != len(unique_container_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more containers not found"
+        )
+
+    total_waste_amount = 0
+
+    # Her konteynerin güncel doluluk miktarını hesapla
+    for container in containers:
+        current_fill_level = calculate_fill_level(
+            container
+        )
+
+        current_waste_amount = (
+            container.capacity
+            * current_fill_level
+            / 100
+        )
+
+        total_waste_amount += current_waste_amount
+
+    # Kalan araç kapasitesini hesapla
+    remaining_capacity = (
+        vehicle.capacity
+        - total_waste_amount
+    )
+
+    # Toplam atık araç kapasitesini aşıyor mu?
+    capacity_ok = (
+        total_waste_amount
+        <= vehicle.capacity
+    )
+
+    # Kalan kapasite negatif görünmesin
+    if remaining_capacity < 0:
+        remaining_capacity = 0
+
+    return {
+        "vehicle_id": vehicle.id,
+        "vehicle_capacity": float(vehicle.capacity),
+        "selected_containers_count": len(containers),
+        "total_waste_amount": round(
+            total_waste_amount,
+            2
+        ),
+        "remaining_capacity": round(
+            remaining_capacity,
+            2
+        ),
+        "capacity_ok": capacity_ok
+    }
