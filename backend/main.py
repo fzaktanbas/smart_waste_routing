@@ -12,7 +12,7 @@ from schemas.container import ContainerCreate, ContainerResponse, ContainerUpdat
 from schemas.settings import SettingsResponse, SettingsUpdate
 from schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 from schemas.route import RouteCapacityCheck, RouteCapacityResponse
-
+from services.ors_service import get_route
 
 app = FastAPI()
 
@@ -730,4 +730,124 @@ def check_route_capacity(
             2
         ),
         "capacity_ok": capacity_ok
+    }
+
+
+
+# --------------------------------------------------
+# CREATE ROUTE
+# --------------------------------------------------
+
+@app.post("/routes/{vehicle_id}")
+def create_route(
+    vehicle_id: int,
+    db: Session = Depends(get_db)
+):
+    # Aracı bul
+    vehicle = db.query(
+        Vehicle
+    ).filter(
+        Vehicle.id == vehicle_id
+    ).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    # Araç aktif mi?
+    if vehicle.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="Selected vehicle is not active"
+        )
+
+    # Sistemdeki toplama eşiğini al
+    settings = db.query(
+        SystemSettings
+    ).first()
+
+    if settings is None:
+        collection_threshold = 80
+    else:
+        collection_threshold = settings.collection_threshold
+
+    # Tüm konteynerleri al
+    containers = db.query(
+        Container,
+        func.ST_X(Container.location).label("longitude"),
+        func.ST_Y(Container.location).label("latitude")
+    ).filter(
+        Container.status == "active"
+    ).all()
+
+    # Sadece toplanması gereken konteynerleri seç
+    full_containers = []
+
+    for container, longitude, latitude in containers:
+
+        current_fill_level = calculate_fill_level(
+            container
+        )
+
+        if current_fill_level >= collection_threshold:
+            full_containers.append({
+                "id": container.id,
+                "name": container.name,
+                "longitude": longitude,
+                "latitude": latitude,
+                "fill_level": current_fill_level
+            })
+
+    # Toplanacak konteyner yoksa ORS'ye istek gönderme
+    if not full_containers:
+        return {
+            "message": "There are no containers that need collection.",
+            "vehicle_id": vehicle.id,
+            "collection_threshold": collection_threshold,
+            "containers": []
+        }
+
+    # Araç konumunu al
+    vehicle_longitude = db.query(
+        func.ST_X(Vehicle.current_location)
+    ).filter(
+        Vehicle.id == vehicle.id
+    ).scalar()
+
+    vehicle_latitude = db.query(
+        func.ST_Y(Vehicle.current_location)
+    ).filter(
+        Vehicle.id == vehicle.id
+    ).scalar()
+
+    # ORS için koordinatları oluştur
+    # İlk nokta araç, sonrasında konteynerler
+    coordinates = [
+        [
+            vehicle_longitude,
+            vehicle_latitude
+        ]
+    ]
+
+    for container in full_containers:
+        coordinates.append([
+            container["longitude"],
+            container["latitude"]
+        ])
+
+    # ORS'ye TEK istek gönder
+    route = get_route(coordinates)
+
+    summary = route["routes"][0]["summary"]
+
+    return {
+        "vehicle_id": vehicle.id,
+        "vehicle_name": vehicle.name,
+        "collection_threshold": collection_threshold,
+        "containers": full_containers,
+        "distance_meters": summary["distance"],
+        "duration_seconds": summary["duration"],
+        "geometry": route["routes"][0]["geometry"]
     }
