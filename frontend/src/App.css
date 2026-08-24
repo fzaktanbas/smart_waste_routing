@@ -1,0 +1,15 @@
+.app {
+  width: 100%;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.app h1 {
+  margin-bottom: 20px;
+}
+
+.map-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}

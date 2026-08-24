@@ -1,6 +1,7 @@
 from turtle import rt
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from datetime import datetime, timezone
@@ -14,10 +15,25 @@ from schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 from schemas.route import RouteCapacityCheck, RouteCapacityResponse
 from services.ors_service import get_route
 
+
 app = FastAPI()
 
-Base.metadata.create_all(bind=engine)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+Base.metadata.create_all(bind=engine)
 
 def create_default_settings():
     # Sistem ayarı yoksa varsayılan toplama eşiğini oluşturur.
