@@ -67,12 +67,13 @@ const createVehicleIcon = () => {
 
 function App() {
   const [vehicles, setVehicles] = useState([]);
-
   const [selectedVehicle, setSelectedVehicle] = useState(null);
 
   const [containers, setContainers] = useState([]);
-
   const [selectedContainers, setSelectedContainers] = useState([]);
+
+  // Backend'den gelen kapasite kontrol sonucu
+  const [capacityResult, setCapacityResult] = useState(null);
 
   // -----------------------------------------
   // ARAÇLARI GETİR
@@ -81,13 +82,10 @@ function App() {
   useEffect(() => {
     fetch("http://127.0.0.1:8000/vehicles")
       .then((response) => response.json())
-
       .then((data) => {
         console.log("ARAÇ VERİLERİ:", data);
-
         setVehicles(data);
       })
-
       .catch((error) => {
         console.error("Araçlar alınamadı:", error);
       });
@@ -100,13 +98,10 @@ function App() {
   useEffect(() => {
     fetch("http://127.0.0.1:8000/containers")
       .then((response) => response.json())
-
       .then((data) => {
         console.log("CONTAINER VERİLERİ:", data);
-
         setContainers(data);
       })
-
       .catch((error) => {
         console.error("Konteynerler alınamadı:", error);
       });
@@ -123,9 +118,11 @@ function App() {
 
     setSelectedVehicle(vehicle);
 
-    // Araç değiştiğinde
-    // konteyner seçimlerini sıfırla
+    // Araç değişince eski konteyner seçimlerini temizle
     setSelectedContainers([]);
+
+    // Eski kapasite sonucunu temizle
+    setCapacityResult(null);
   };
 
   // -----------------------------------------
@@ -151,12 +148,46 @@ function App() {
   };
 
   // -----------------------------------------
-  // TOPLAM ATIK MİKTARI
+  // OTOMATİK KAPASİTE KONTROLÜ
   // -----------------------------------------
 
-  const totalWasteAmount = selectedContainers.reduce((total, container) => {
-    return total + (container.capacity * container.fill_level) / 100;
-  }, 0);
+  useEffect(() => {
+    if (!selectedVehicle || selectedContainers.length === 0) {
+      return;
+    }
+
+    const containerIds = selectedContainers.map((container) => container.id);
+
+    fetch("http://127.0.0.1:8000/route/check-capacity", {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      body: JSON.stringify({
+        vehicle_id: selectedVehicle.id,
+        container_ids: containerIds,
+      }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Kapasite kontrolü başarısız oldu");
+        }
+
+        return response.json();
+      })
+
+      .then((data) => {
+        console.log("KAPASİTE SONUCU:", data);
+
+        setCapacityResult(data);
+      })
+
+      .catch((error) => {
+        console.error("Kapasite kontrolü yapılamadı:", error);
+      });
+  }, [selectedVehicle, selectedContainers]);
 
   return (
     <div className="app">
@@ -196,15 +227,47 @@ function App() {
       </div>
 
       {/* -------------------------------- */}
-      {/* SEÇİLEN KONTEYNER BİLGİSİ */}
+      {/* SEÇİLEN KONTEYNER VE KAPASİTE */}
       {/* -------------------------------- */}
 
       {selectedVehicle && (
         <div className="selection-info">
           <strong>Seçilen konteyner:</strong> {selectedContainers.length}
-          <br />
-          <strong>Toplam atık:</strong> {totalWasteAmount.toFixed(0)} L
+          {capacityResult && (
+            <>
+              <br />
+              <strong>Toplam atık:</strong> {capacityResult.total_waste_amount}{" "}
+              L
+              <br />
+              <strong>Araç kapasitesi:</strong>{" "}
+              {capacityResult.vehicle_capacity} L
+              <br />
+              <strong>Kalan kapasite:</strong>{" "}
+              {capacityResult.remaining_capacity} L
+              <br />
+              <br />
+              {capacityResult.capacity_ok ? (
+                <strong>✅ Araç kapasitesi uygun</strong>
+              ) : (
+                <strong>❌ Araç kapasitesi yetersiz</strong>
+              )}
+            </>
+          )}
         </div>
+      )}
+
+      {/* -------------------------------- */}
+      {/* ROTA OLUŞTUR BUTONU */}
+      {/* -------------------------------- */}
+
+      {selectedVehicle && (
+        <button
+          disabled={
+            selectedContainers.length === 0 || !capacityResult?.capacity_ok
+          }
+        >
+          Rota Oluştur
+        </button>
       )}
 
       {/* -------------------------------- */}
@@ -260,19 +323,17 @@ function App() {
                   position={[container.latitude, container.longitude]}
                   icon={createContainerIcon(container.fill_level, isSelected)}
                   eventHandlers={{
-                    // Mouse üzerine gelince
-                    // popup aç
+                    // Mouse üzerine gelince popup aç
                     mouseover: (event) => {
                       event.target.openPopup();
                     },
 
-                    // Mouse ayrılınca
-                    // popup kapat
+                    // Mouse ayrılınca popup kapat
                     mouseout: (event) => {
                       event.target.closePopup();
                     },
 
-                    // Tıklayınca seç
+                    // Tıklayınca konteyneri seç / kaldır
                     click: () => {
                       handleContainerSelect(container);
                     },
