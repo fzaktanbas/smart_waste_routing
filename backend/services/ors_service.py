@@ -25,17 +25,17 @@ def get_route(coordinates):
 
     headers = {
         "Authorization": ORS_API_KEY,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     body = {
-        "coordinates": coordinates
+        "coordinates": coordinates,
     }
 
     response = requests.post(
         url,
         json=body,
-        headers=headers
+        headers=headers,
     )
 
     response.raise_for_status()

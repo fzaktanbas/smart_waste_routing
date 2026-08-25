@@ -20,6 +20,94 @@ from services.ors_service import get_route
 app = FastAPI()
 
 
+
+# --------------------------------------------------
+# ENCODED POLYLINE -> GEOJSON DECODER
+# --------------------------------------------------
+
+def decode_polyline(encoded):
+    """
+    ORS'nin encoded polyline formatındaki geometriyi
+    GeoJSON LineString formatına çevirir.
+
+    ORS encoded polyline:
+    "abc123..."
+
+    Çıktı:
+    {
+        "type": "LineString",
+        "coordinates": [
+            [longitude, latitude],
+            ...
+        ]
+    }
+    """
+
+    index = 0
+    latitude = 0
+    longitude = 0
+
+    coordinates = []
+
+    while index < len(encoded):
+
+        # Latitude
+        shift = 0
+        result = 0
+
+        while True:
+            byte = ord(encoded[index]) - 63
+            index += 1
+
+            result |= (byte & 0x1F) << shift
+            shift += 5
+
+            if byte < 0x20:
+                break
+
+        if result & 1:
+            delta_latitude = ~(result >> 1)
+        else:
+            delta_latitude = result >> 1
+
+        latitude += delta_latitude
+
+        # Longitude
+        shift = 0
+        result = 0
+
+        while True:
+            byte = ord(encoded[index]) - 63
+            index += 1
+
+            result |= (byte & 0x1F) << shift
+            shift += 5
+
+            if byte < 0x20:
+                break
+
+        if result & 1:
+            delta_longitude = ~(result >> 1)
+        else:
+            delta_longitude = result >> 1
+
+        longitude += delta_longitude
+
+        coordinates.append([
+            longitude / 100000,
+            latitude / 100000
+        ])
+
+    return {
+        "type": "LineString",
+        "coordinates": coordinates
+    }
+
+
+
+
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

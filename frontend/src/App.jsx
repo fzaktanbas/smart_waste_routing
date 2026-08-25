@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+} from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./App.css";
@@ -99,6 +105,23 @@ function App() {
 
   // Rota oluşturma hatası
   const [routeError, setRouteError] = useState(null);
+
+  // -----------------------------------------
+  // ROTA KOORDİNATLARINI LEAFLET FORMATINA ÇEVİR
+  // -----------------------------------------
+
+  // ORS GeoJSON koordinatları:
+  // [longitude, latitude]
+  //
+  // Leaflet koordinatları:
+  // [latitude, longitude]
+
+  const routePositions = routeResult?.geometry?.coordinates
+    ? routeResult.geometry.coordinates.map(([longitude, latitude]) => [
+        latitude,
+        longitude,
+      ])
+    : [];
 
   // -----------------------------------------
   // ARAÇLARI GETİR
@@ -393,17 +416,29 @@ function App() {
 
       {routeResult && (
         <div className="route-result">
-          <h2>Rota Oluşturuldu 🚛</h2>
+          <h2>🚛 Rota Oluşturuldu</h2>
 
-          {/* 
-            Şimdilik backend'den gelen tüm veriyi
-            ekranda görelim. 
-            
-            Bir sonraki adımda backend response'una göre
-            mesafe ve süreyi özel olarak göstereceğiz.
-          */}
+          <p>
+            <strong>Araç:</strong> {routeResult.vehicle_name}
+          </p>
 
-          <pre>{JSON.stringify(routeResult, null, 2)}</pre>
+          <p>
+            <strong>Toplam Atık:</strong> {routeResult.total_waste_amount} L
+          </p>
+
+          <p>
+            <strong>Kalan Kapasite:</strong> {routeResult.remaining_capacity} L
+          </p>
+
+          <p>
+            <strong>Mesafe:</strong>{" "}
+            {(routeResult.distance_meters / 1000).toFixed(2)} km
+          </p>
+
+          <p>
+            <strong>Tahmini Süre:</strong>{" "}
+            {(routeResult.duration_seconds / 60).toFixed(1)} dakika
+          </p>
         </div>
       )}
 
@@ -444,6 +479,21 @@ function App() {
                 Durum: {selectedVehicle.status}
               </Popup>
             </Marker>
+
+            {/* -------------------------------- */}
+            {/* OLUŞTURULAN ROTA ÇİZGİSİ */}
+            {/* -------------------------------- */}
+
+            {routePositions.length > 0 && (
+              <Polyline
+                positions={routePositions}
+                pathOptions={{
+                  color: "#2563eb",
+                  weight: 5,
+                  opacity: 0.8,
+                }}
+              />
+            )}
 
             {/* -------------------------------- */}
             {/* KONTEYNERLER */}
