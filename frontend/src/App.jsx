@@ -4,6 +4,10 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./App.css";
 
+// -----------------------------------------
+// KONTEYNER MARKER'I
+// -----------------------------------------
+
 const createContainerIcon = (fillLevel, selected = false) => {
   let color = "#22c55e";
 
@@ -31,6 +35,10 @@ const createContainerIcon = (fillLevel, selected = false) => {
     iconAnchor: [16, 16],
   });
 };
+
+// -----------------------------------------
+// ARAÇ MARKER'I
+// -----------------------------------------
 
 const createVehicleIcon = () => {
   return L.divIcon({
@@ -65,15 +73,32 @@ const createVehicleIcon = () => {
   });
 };
 
+// -----------------------------------------
+// APP
+// -----------------------------------------
+
 function App() {
+  // -----------------------------------------
+  // STATE'LER
+  // -----------------------------------------
+
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
 
   const [containers, setContainers] = useState([]);
   const [selectedContainers, setSelectedContainers] = useState([]);
 
-  // Backend'den gelen kapasite kontrol sonucu
+  // Kapasite kontrolü sonucu
   const [capacityResult, setCapacityResult] = useState(null);
+
+  // Oluşturulan rota bilgisi
+  const [routeResult, setRouteResult] = useState(null);
+
+  // Rota oluşturulurken yüklenme durumu
+  const [isCreatingRoute, setIsCreatingRoute] = useState(false);
+
+  // Rota oluşturma hatası
+  const [routeError, setRouteError] = useState(null);
 
   // -----------------------------------------
   // ARAÇLARI GETİR
@@ -123,6 +148,12 @@ function App() {
 
     // Eski kapasite sonucunu temizle
     setCapacityResult(null);
+
+    // Eski rota sonucunu temizle
+    setRouteResult(null);
+
+    // Eski rota hatasını temizle
+    setRouteError(null);
   };
 
   // -----------------------------------------
@@ -130,19 +161,21 @@ function App() {
   // -----------------------------------------
 
   const handleContainerSelect = (container) => {
+    setRouteResult(null);
+    setRouteError(null);
+    setCapacityResult(null);
+
     setSelectedContainers((currentSelected) => {
       const alreadySelected = currentSelected.some(
         (selected) => selected.id === container.id,
       );
 
-      // Zaten seçiliyse seçimden çıkar
       if (alreadySelected) {
         return currentSelected.filter(
           (selected) => selected.id !== container.id,
         );
       }
 
-      // Seçili değilse ekle
       return [...currentSelected, container];
     });
   };
@@ -152,6 +185,8 @@ function App() {
   // -----------------------------------------
 
   useEffect(() => {
+    // Araç veya konteyner seçilmemişse
+    // API isteği gönderme
     if (!selectedVehicle || selectedContainers.length === 0) {
       return;
     }
@@ -186,8 +221,81 @@ function App() {
 
       .catch((error) => {
         console.error("Kapasite kontrolü yapılamadı:", error);
+
+        setCapacityResult(null);
       });
   }, [selectedVehicle, selectedContainers]);
+
+  // -----------------------------------------
+  // ROTA OLUŞTUR
+  // -----------------------------------------
+
+  const handleCreateRoute = async () => {
+    // Araç seçilmemişse işlem yapma
+    if (!selectedVehicle) {
+      return;
+    }
+
+    // Konteyner seçilmemişse işlem yapma
+    if (selectedContainers.length === 0) {
+      return;
+    }
+
+    // Seçilen konteynerlerin ID'lerini al
+    const containerIds = selectedContainers.map((container) => container.id);
+
+    try {
+      // Yüklenme durumunu başlat
+      setIsCreatingRoute(true);
+
+      // Eski hata ve rota sonucunu temizle
+      setRouteError(null);
+      setRouteResult(null);
+
+      // Backend'e rota isteği gönder
+      const response = await fetch(
+        `http://127.0.0.1:8000/routes/${selectedVehicle.id}`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+          },
+
+          body: JSON.stringify({
+            container_ids: containerIds,
+          }),
+        },
+      );
+
+      // Backend hata döndürdüyse
+      if (!response.ok) {
+        const errorData = await response.json();
+
+        throw new Error(errorData.detail || "Rota oluşturulamadı");
+      }
+
+      // Backend'den gelen rota verisini al
+      const data = await response.json();
+
+      console.log("ROTA SONUCU:", data);
+
+      // Rota sonucunu state'e kaydet
+      setRouteResult(data);
+    } catch (error) {
+      console.error("Rota oluşturma hatası:", error);
+
+      // Hatayı ekranda göstermek için kaydet
+      setRouteError(error.message);
+    } finally {
+      // İşlem tamamlandı
+      setIsCreatingRoute(false);
+    }
+  };
+
+  // -----------------------------------------
+  // EKRAN
+  // -----------------------------------------
 
   return (
     <div className="app">
@@ -262,12 +370,41 @@ function App() {
 
       {selectedVehicle && (
         <button
+          onClick={handleCreateRoute}
           disabled={
-            selectedContainers.length === 0 || !capacityResult?.capacity_ok
+            selectedContainers.length === 0 ||
+            !capacityResult?.capacity_ok ||
+            isCreatingRoute
           }
         >
-          Rota Oluştur
+          {isCreatingRoute ? "Rota Oluşturuluyor..." : "Rota Oluştur"}
         </button>
+      )}
+
+      {/* -------------------------------- */}
+      {/* ROTA HATASI */}
+      {/* -------------------------------- */}
+
+      {routeError && <div className="route-error">❌ {routeError}</div>}
+
+      {/* -------------------------------- */}
+      {/* ROTA SONUCU */}
+      {/* -------------------------------- */}
+
+      {routeResult && (
+        <div className="route-result">
+          <h2>Rota Oluşturuldu 🚛</h2>
+
+          {/* 
+            Şimdilik backend'den gelen tüm veriyi
+            ekranda görelim. 
+            
+            Bir sonraki adımda backend response'una göre
+            mesafe ve süreyi özel olarak göstereceğiz.
+          */}
+
+          <pre>{JSON.stringify(routeResult, null, 2)}</pre>
+        </div>
       )}
 
       {/* -------------------------------- */}

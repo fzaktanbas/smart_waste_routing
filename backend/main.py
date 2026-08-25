@@ -12,7 +12,8 @@ from models import Container, Vehicle, SystemSettings
 from schemas.container import ContainerCreate, ContainerResponse, ContainerUpdate
 from schemas.settings import SettingsResponse, SettingsUpdate
 from schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
-from schemas.route import RouteCapacityCheck, RouteCapacityResponse
+from schemas.route import ( RouteCapacityCheck, RouteCapacityResponse, RouteCreate
+)
 from services.ors_service import get_route
 
 
@@ -749,7 +750,6 @@ def check_route_capacity(
     }
 
 
-
 # --------------------------------------------------
 # CREATE ROUTE
 # --------------------------------------------------
@@ -757,9 +757,13 @@ def check_route_capacity(
 @app.post("/routes/{vehicle_id}")
 def create_route(
     vehicle_id: int,
+    route_data: RouteCreate,
     db: Session = Depends(get_db)
 ):
-    # Aracı bul
+    # -----------------------------------------
+    # ARACI BUL
+    # -----------------------------------------
+
     vehicle = db.query(
         Vehicle
     ).filter(
@@ -772,34 +776,77 @@ def create_route(
             detail="Vehicle not found"
         )
 
-    # Araç aktif mi?
+    # -----------------------------------------
+    # ARAÇ AKTİF Mİ?
+    # -----------------------------------------
+
     if vehicle.status != "active":
         raise HTTPException(
             status_code=400,
             detail="Selected vehicle is not active"
         )
 
-    # Sistemdeki toplama eşiğini al
-    settings = db.query(
-        SystemSettings
-    ).first()
+    # -----------------------------------------
+    # KONTEYNER SEÇİLMİŞ Mİ?
+    # -----------------------------------------
 
-    if settings is None:
-        collection_threshold = 80
-    else:
-        collection_threshold = settings.collection_threshold
+    if not route_data.container_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No containers selected"
+        )
 
-    # Tüm konteynerleri al
+    # -----------------------------------------
+    # AYNI KONTEYNER İKİ KEZ GELMESİN
+    # -----------------------------------------
+
+    unique_container_ids = list(
+        set(route_data.container_ids)
+    )
+
+    # -----------------------------------------
+    # SEÇİLEN KONTEYNERLERİ BUL
+    # -----------------------------------------
+
     containers = db.query(
         Container,
         func.ST_X(Container.location).label("longitude"),
         func.ST_Y(Container.location).label("latitude")
     ).filter(
-        Container.status == "active"
+        Container.id.in_(unique_container_ids)
     ).all()
 
-    # Sadece toplanması gereken konteynerleri seç
-    full_containers = []
+    # -----------------------------------------
+    # KONTEYNERLERİN HEPSİ VAR MI?
+    # -----------------------------------------
+
+    if len(containers) != len(unique_container_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more containers not found"
+        )
+
+    # -----------------------------------------
+    # SADECE AKTİF KONTEYNERLERİ KULLAN
+    # -----------------------------------------
+
+    inactive_containers = [
+        container.id
+        for container, longitude, latitude in containers
+        if container.status != "active"
+    ]
+
+    if inactive_containers:
+        raise HTTPException(
+            status_code=400,
+            detail="One or more selected containers are not active"
+        )
+
+    # -----------------------------------------
+    # ARAÇ KAPASİTESİNİ KONTROL ET
+    # -----------------------------------------
+
+    total_waste_amount = 0
 
     for container, longitude, latitude in containers:
 
@@ -807,25 +854,32 @@ def create_route(
             container
         )
 
-        if current_fill_level >= collection_threshold:
-            full_containers.append({
-                "id": container.id,
-                "name": container.name,
-                "longitude": longitude,
-                "latitude": latitude,
-                "fill_level": current_fill_level
-            })
+        current_waste_amount = (
+            container.capacity
+            * current_fill_level
+            / 100
+        )
 
-    # Toplanacak konteyner yoksa ORS'ye istek gönderme
-    if not full_containers:
-        return {
-            "message": "There are no containers that need collection.",
-            "vehicle_id": vehicle.id,
-            "collection_threshold": collection_threshold,
-            "containers": []
-        }
+        total_waste_amount += current_waste_amount
 
-    # Araç konumunu al
+    # -----------------------------------------
+    # KAPASİTE AŞILIYOR MU?
+    # -----------------------------------------
+
+    if total_waste_amount > vehicle.capacity:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Selected containers exceed vehicle capacity. "
+                f"Total waste: {round(total_waste_amount, 2)} L, "
+                f"Vehicle capacity: {vehicle.capacity} L"
+            )
+        )
+
+    # -----------------------------------------
+    # ARAÇ KONUMUNU AL
+    # -----------------------------------------
+
     vehicle_longitude = db.query(
         func.ST_X(Vehicle.current_location)
     ).filter(
@@ -838,8 +892,11 @@ def create_route(
         Vehicle.id == vehicle.id
     ).scalar()
 
-    # ORS için koordinatları oluştur
-    # İlk nokta araç, sonrasında konteynerler
+    # -----------------------------------------
+    # ORS KOORDİNATLARI
+    # -----------------------------------------
+
+    # İlk nokta araç
     coordinates = [
         [
             vehicle_longitude,
@@ -847,22 +904,54 @@ def create_route(
         ]
     ]
 
-    for container in full_containers:
+    # Sonrasında SADECE kullanıcının seçtiği
+    # konteynerleri ekliyoruz.
+    selected_containers = []
+
+    for container, longitude, latitude in containers:
+
         coordinates.append([
-            container["longitude"],
-            container["latitude"]
+            longitude,
+            latitude
         ])
 
-    # ORS'ye TEK istek gönder
+        selected_containers.append({
+            "id": container.id,
+            "name": container.name,
+            "longitude": longitude,
+            "latitude": latitude,
+            "fill_level": calculate_fill_level(
+                container
+            )
+        })
+
+    # -----------------------------------------
+    # ORS'YE ROTA İSTEĞİ
+    # -----------------------------------------
+
     route = get_route(coordinates)
 
     summary = route["routes"][0]["summary"]
 
+    # -----------------------------------------
+    # SONUÇ
+    # -----------------------------------------
+
     return {
         "vehicle_id": vehicle.id,
         "vehicle_name": vehicle.name,
-        "collection_threshold": collection_threshold,
-        "containers": full_containers,
+        "selected_containers": selected_containers,
+        "total_waste_amount": round(
+            total_waste_amount,
+            2
+        ),
+        "vehicle_capacity": float(
+            vehicle.capacity
+        ),
+        "remaining_capacity": round(
+            vehicle.capacity - total_waste_amount,
+            2
+        ),
         "distance_meters": summary["distance"],
         "duration_seconds": summary["duration"],
         "geometry": route["routes"][0]["geometry"]

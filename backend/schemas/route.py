@@ -13,3 +13,7 @@ class RouteCapacityResponse(BaseModel):
     total_waste_amount: float
     remaining_capacity: float
     capacity_ok: bool
+
+
+class RouteCreate(BaseModel):
+    container_ids: list[int]
