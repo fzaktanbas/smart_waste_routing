@@ -1021,26 +1021,41 @@ def create_route(
 
     summary = route["routes"][0]["summary"]
 
+
+
+
+
+    # -----------------------------------------
+    # ORS GEOMETRY'Yİ GEOJSON'A ÇEVİR
+    # ----------------------------------------- 
+
+    encoded_geometry = route["routes"][0]["geometry"]
+
+    geometry = decode_polyline(encoded_geometry)
+
+
+
+    
     # -----------------------------------------
     # SONUÇ
     # -----------------------------------------
 
     return {
-        "vehicle_id": vehicle.id,
-        "vehicle_name": vehicle.name,
-        "selected_containers": selected_containers,
-        "total_waste_amount": round(
-            total_waste_amount,
-            2
-        ),
-        "vehicle_capacity": float(
-            vehicle.capacity
-        ),
-        "remaining_capacity": round(
-            vehicle.capacity - total_waste_amount,
-            2
-        ),
-        "distance_meters": summary["distance"],
-        "duration_seconds": summary["duration"],
-        "geometry": route["routes"][0]["geometry"]
-    }
+    "vehicle_id": vehicle.id,
+    "vehicle_name": vehicle.name,
+    "selected_containers": selected_containers,
+    "total_waste_amount": round(
+        total_waste_amount,
+        2
+    ),
+    "vehicle_capacity": float(
+        vehicle.capacity
+    ),
+    "remaining_capacity": round(
+        vehicle.capacity - total_waste_amount,
+        2
+    ),
+    "distance_meters": summary["distance"],
+    "duration_seconds": summary["duration"],
+    "geometry": geometry
+}

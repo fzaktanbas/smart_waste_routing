@@ -29,7 +29,7 @@ def get_route(coordinates):
     }
 
     body = {
-        "coordinates": coordinates,
+    "coordinates": coordinates
     }
 
     response = requests.post(
