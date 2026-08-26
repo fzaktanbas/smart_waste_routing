@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from datetime import datetime, timezone
 from geoalchemy2 import WKTElement
+from itertools import permutations
+
 
 from database import engine, Base, SessionLocal
 from models import Container, Vehicle, SystemSettings
@@ -837,9 +839,10 @@ def check_route_capacity(
         "capacity_ok": capacity_ok
     }
 
-
+#feza notu: Bu yöntem küçük sayıda seçilmiş konteyner için iyi.
+# 5 konteynerde 120 rota isteği atıyor; daha fazla konteyner için sonra ORS'nin gerçek optimizasyon/matrix mantığına geçmemiz daha doğru olur.
 # --------------------------------------------------
-# CREATE ROUTE
+# CREATE OPTIMIZED ROUTE
 # --------------------------------------------------
 
 @app.post("/routes/{vehicle_id}")
@@ -931,7 +934,7 @@ def create_route(
         )
 
     # -----------------------------------------
-    # ARAÇ KAPASİTESİNİ KONTROL ET
+    # ARAÇ KAPASİTESİNİ HESAPLA
     # -----------------------------------------
 
     total_waste_amount = 0
@@ -951,7 +954,7 @@ def create_route(
         total_waste_amount += current_waste_amount
 
     # -----------------------------------------
-    # KAPASİTE AŞILIYOR MU?
+    # KAPASİTE KONTROLÜ
     # -----------------------------------------
 
     if total_waste_amount > vehicle.capacity:
@@ -981,27 +984,108 @@ def create_route(
     ).scalar()
 
     # -----------------------------------------
-    # ORS KOORDİNATLARI
+    # ÇOK FAZLA KONTEYNER KONTROLÜ
     # -----------------------------------------
 
-    # İlk nokta araç
-    coordinates = [
-        [
-            vehicle_longitude,
-            vehicle_latitude
-        ]
-    ]
+    # Tüm olası sıraları deneyeceğimiz için
+    # konteyner sayısını şimdilik sınırlandırıyoruz.
+    #
+    # 5 konteyner = 120 farklı sıra
+    # 6 konteyner = 720 farklı sıra
 
-    # Sonrasında SADECE kullanıcının seçtiği
-    # konteynerleri ekliyoruz.
+    if len(containers) > 5:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "For exact route optimization, "
+                "maximum 5 containers can currently be selected."
+            )
+        )
+
+    # -----------------------------------------
+    # EN KISA ROTAYI BUL
+    # -----------------------------------------
+
+    shortest_route = None
+    shortest_order = None
+    shortest_distance = None
+
+    # Kullanıcının seçme sırasını tamamen yok sayıyoruz.
+    # Tüm olası konteyner sıralarını deniyoruz.
+
+    for container_order in permutations(containers):
+
+        # İlk nokta her zaman aracın konumu
+        coordinates = [
+            [
+                vehicle_longitude,
+                vehicle_latitude
+            ]
+        ]
+
+        # Konteynerleri o anki olası sıraya göre ekle
+        for container, longitude, latitude in container_order:
+            coordinates.append([
+                longitude,
+                latitude
+            ])
+
+        try:
+            # ORS'den rota al
+            route = get_route(coordinates)
+
+            route_summary = (
+                route["routes"][0]["summary"]
+            )
+
+            current_distance = (
+                route_summary["distance"]
+            )
+
+            # İlk rota veya daha kısa rota bulunduysa
+            if (
+                shortest_distance is None
+                or current_distance < shortest_distance
+            ):
+                shortest_distance = current_distance
+
+                shortest_route = route
+
+                shortest_order = container_order
+
+        except Exception as error:
+            print(
+                "Rota hesaplama hatası:",
+                error
+            )
+
+            continue
+
+    # -----------------------------------------
+    # HİÇBİR ROTA BULUNAMADI MI?
+    # -----------------------------------------
+
+    if shortest_route is None:
+        raise HTTPException(
+            status_code=500,
+            detail="No route could be created"
+        )
+
+    # -----------------------------------------
+    # EN KISA ROTANIN ÖZETİ
+    # -----------------------------------------
+
+    summary = (
+        shortest_route["routes"][0]["summary"]
+    )
+
+    # -----------------------------------------
+    # OPTİMİZE EDİLMİŞ KONTEYNER SIRASI
+    # -----------------------------------------
+
     selected_containers = []
 
-    for container, longitude, latitude in containers:
-
-        coordinates.append([
-            longitude,
-            latitude
-        ])
+    for container, longitude, latitude in shortest_order:
 
         selected_containers.append({
             "id": container.id,
@@ -1014,48 +1098,47 @@ def create_route(
         })
 
     # -----------------------------------------
-    # ORS'YE ROTA İSTEĞİ
+    # ORS GEOMETRY'Yİ DECODE ET
     # -----------------------------------------
 
-    route = get_route(coordinates)
+    encoded_geometry = (
+        shortest_route["routes"][0]["geometry"]
+    )
 
-    summary = route["routes"][0]["summary"]
+    geometry = decode_polyline(
+        encoded_geometry
+    )
 
-
-
-
-
-    # -----------------------------------------
-    # ORS GEOMETRY'Yİ GEOJSON'A ÇEVİR
-    # ----------------------------------------- 
-
-    encoded_geometry = route["routes"][0]["geometry"]
-
-    geometry = decode_polyline(encoded_geometry)
-
-
-
-    
     # -----------------------------------------
     # SONUÇ
     # -----------------------------------------
 
     return {
-    "vehicle_id": vehicle.id,
-    "vehicle_name": vehicle.name,
-    "selected_containers": selected_containers,
-    "total_waste_amount": round(
-        total_waste_amount,
-        2
-    ),
-    "vehicle_capacity": float(
-        vehicle.capacity
-    ),
-    "remaining_capacity": round(
-        vehicle.capacity - total_waste_amount,
-        2
-    ),
-    "distance_meters": summary["distance"],
-    "duration_seconds": summary["duration"],
-    "geometry": geometry
-}
+        "vehicle_id": vehicle.id,
+        "vehicle_name": vehicle.name,
+
+        # Konteynerler artık kullanıcının
+        # seçme sırasına göre değil,
+        # optimize edilmiş sıraya göre dönüyor.
+        "selected_containers": selected_containers,
+
+        "total_waste_amount": round(
+            total_waste_amount,
+            2
+        ),
+
+        "vehicle_capacity": float(
+            vehicle.capacity
+        ),
+
+        "remaining_capacity": round(
+            vehicle.capacity - total_waste_amount,
+            2
+        ),
+
+        "distance_meters": summary["distance"],
+
+        "duration_seconds": summary["duration"],
+
+        "geometry": geometry
+    }
